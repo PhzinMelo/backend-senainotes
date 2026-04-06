@@ -1,22 +1,19 @@
-require('dotenv').config(); // Carrega .env ANTES de qualquer outro módulo
-const app = require('./src/app');
+require('dotenv').config(); // Must load .env BEFORE any other module
+const app             = require('./src/app');
 const connectDatabase = require('./src/config/database');
 
 const PORT = process.env.PORT || 3000;
 
-/**
- * Inicialização do servidor.
- * Conecta ao banco primeiro — só sobe o HTTP se a conexão for bem-sucedida.
- */
 const startServer = async () => {
   await connectDatabase();
 
   const server = app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT} [${process.env.NODE_ENV}]`);
-    console.log(`🩺 Health check: http://localhost:${PORT}/health`);
+    console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
+    console.log(`📖 Documentação Swagger: http://localhost:${PORT}/api-docs`);
+    console.log(`🩺 Health check:         http://localhost:${PORT}/health`);
+    console.log(`🌍 Ambiente:             ${process.env.NODE_ENV || 'development'}`);
   });
 
-  // ─── Graceful shutdown: fecha conexões ao encerrar o processo ────────────
   const shutdown = async (signal) => {
     console.log(`\n⚠️  ${signal} recebido. Encerrando servidor...`);
     server.close(() => {
@@ -26,7 +23,12 @@ const startServer = async () => {
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
+
+  process.on('unhandledRejection', (err) => {
+    console.error('❌ UnhandledRejection:', err.message);
+    server.close(() => process.exit(1));
+  });
 };
 
 startServer();

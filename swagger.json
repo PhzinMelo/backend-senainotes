@@ -1,0 +1,686 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Senai Notes API",
+    "version": "1.0.0",
+    "description": "API REST para gerenciamento de notas pessoais com autenticação JWT.\n\n## Como autenticar\n1. Crie uma conta em **POST /api/auth/register** ou faça login em **POST /api/auth/login**.\n2. Copie o campo `data.token` da resposta.\n3. Clique no botão **Authorize 🔒** (canto superior direito) e cole o token no campo `Bearer`.\n4. Todos os endpoints de notas passarão a funcionar automaticamente.\n\n## Formato padrão de resposta\nTodas as respostas seguem o mesmo contrato:\n\n**Sucesso:** `{ \"success\": true, \"message\": \"...\", \"data\": {...} }`\n\n**Erro:** `{ \"success\": false, \"message\": \"...\", \"error\": { \"code\": \"...\" } }`",
+    "contact": {
+      "name": "Senai Notes",
+      "url": "http://localhost:3000"
+    },
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Servidor de desenvolvimento local"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Verificação de disponibilidade da API"
+    },
+    {
+      "name": "Auth",
+      "description": "Registro e autenticação de usuários"
+    },
+    {
+      "name": "Notes",
+      "description": "CRUD completo de notas (requer autenticação JWT)"
+    }
+  ],
+  "security": [],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Token JWT obtido em `/api/auth/login` ou `/api/auth/register`. Cole **apenas** o token, sem o prefixo `Bearer `."
+      }
+    },
+    "schemas": {
+      "SuccessResponse": {
+        "type": "object",
+        "required": ["success", "message"],
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Operation completed successfully" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["success", "message", "error"],
+        "properties": {
+          "success": { "type": "boolean", "example": false },
+          "message": { "type": "string", "example": "Detailed error description" },
+          "error": {
+            "type": "object",
+            "required": ["code"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "VALIDATION_ERROR",
+                "enum": [
+                  "VALIDATION_ERROR",
+                  "NOT_FOUND",
+                  "UNAUTHORIZED",
+                  "TOKEN_EXPIRED",
+                  "INVALID_TOKEN",
+                  "DUPLICATE_FIELD",
+                  "INVALID_ID",
+                  "INTERNAL_ERROR",
+                  "API_ERROR"
+                ]
+              },
+              "details": {
+                "type": "string",
+                "description": "Detalhes adicionais (disponível apenas em NODE_ENV=development)"
+              }
+            }
+          }
+        }
+      },
+      "Pagination": {
+        "type": "object",
+        "required": ["total", "page", "limit", "totalPages"],
+        "properties": {
+          "total":      { "type": "integer", "example": 42 },
+          "page":       { "type": "integer", "example": 1 },
+          "limit":      { "type": "integer", "example": 10 },
+          "totalPages": { "type": "integer", "example": 5 }
+        }
+      },
+      "Crop": {
+        "type": "object",
+        "description": "Coordenadas de recorte da imagem, expressas em porcentagem (0–100) da imagem original. O frontend aplica o recorte visualmente via CSS — o backend apenas armazena e retorna esses valores.",
+        "required": ["x", "y", "width", "height"],
+        "properties": {
+          "x":      { "type": "number", "minimum": 0, "maximum": 100, "example": 10, "description": "Offset horizontal (%) a partir da esquerda" },
+          "y":      { "type": "number", "minimum": 0, "maximum": 100, "example": 15, "description": "Offset vertical (%) a partir do topo" },
+          "width":  { "type": "number", "minimum": 1, "maximum": 100, "example": 80, "description": "Largura do recorte (% da imagem)" },
+          "height": { "type": "number", "minimum": 1, "maximum": 100, "example": 70, "description": "Altura do recorte (% da imagem)" }
+        }
+      },
+      "Note": {
+        "type": "object",
+        "required": ["_id", "title", "content", "tags", "archived", "userId", "createdAt", "updatedAt"],
+        "properties": {
+          "_id":       { "type": "string", "example": "665f1a2b3c4d5e6f7a8b9c0d", "description": "ID único do MongoDB" },
+          "title":     { "type": "string", "example": "Reunião de planejamento Q3", "minLength": 2, "maxLength": 200 },
+          "content":   { "type": "string", "example": "Pauta: roadmap, contratações e métricas...", "maxLength": 10000 },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" },
+            "example": ["trabalho", "planejamento"],
+            "description": "Até 10 tags, auto-normalizadas (lowercase, sem duplicatas)"
+          },
+          "imageUrl": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "example": "https://example.com/capa.jpg",
+            "description": "URL pública da imagem de capa (opcional). Deve ser http ou https."
+          },
+          "crop": {
+            "nullable": true,
+            "description": "Coordenadas de recorte da imagem (opcional). Só é relevante quando imageUrl está presente.",
+            "allOf": [{ "$ref": "#/components/schemas/Crop" }]
+          },
+          "archived":  { "type": "boolean", "example": false, "description": "true = nota arquivada; false = nota ativa" },
+          "userId":    { "type": "string", "example": "664abc123def456ghi789jkl", "description": "ID do usuário proprietário (preenchido automaticamente pelo servidor via JWT)" },
+          "createdAt": { "type": "string", "format": "date-time", "example": "2024-06-05T10:00:00.000Z" },
+          "updatedAt": { "type": "string", "format": "date-time", "example": "2024-06-05T14:30:00.000Z" }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": ["id", "name", "email"],
+        "properties": {
+          "id":    { "type": "string", "example": "664abc123def456ghi789jkl" },
+          "name":  { "type": "string", "example": "Maria Oliveira" },
+          "email": { "type": "string", "format": "email", "example": "maria@exemplo.com" }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["name", "email", "password"],
+        "properties": {
+          "name":     { "type": "string", "minLength": 2, "maxLength": 100, "example": "Maria Oliveira" },
+          "email":    { "type": "string", "format": "email", "example": "maria@exemplo.com" },
+          "password": { "type": "string", "minLength": 6, "maxLength": 72, "example": "senhaSegura123", "description": "Mínimo de 6 caracteres. Armazenada com bcrypt (12 salt rounds)" }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email":    { "type": "string", "format": "email", "example": "maria@exemplo.com" },
+          "password": { "type": "string", "example": "senhaSegura123" }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "required": ["success", "message", "data"],
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Login realizado com sucesso" },
+          "data": {
+            "type": "object",
+            "required": ["user", "token"],
+            "properties": {
+              "user":  { "$ref": "#/components/schemas/User" },
+              "token": {
+                "type": "string",
+                "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "description": "JWT válido por 7 dias (configurável via JWT_EXPIRES_IN)"
+              }
+            }
+          }
+        }
+      },
+      "CreateNoteRequest": {
+        "type": "object",
+        "required": ["title", "content"],
+        "properties": {
+          "title":   { "type": "string", "minLength": 2, "maxLength": 200, "example": "Ideias para o projeto" },
+          "content": { "type": "string", "minLength": 1, "maxLength": 10000, "example": "Usar Node.js com MongoDB para a API..." },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string", "maxLength": 30 },
+            "maxItems": 10,
+            "example": ["dev", "backend"],
+            "description": "Opcional. Tags são auto-normalizadas: lowercase e duplicatas removidas."
+          },
+          "imageUrl": {
+            "type": "string",
+            "format": "uri",
+            "example": "https://example.com/imagem.jpg",
+            "description": "Opcional. URL pública de uma imagem (http ou https)."
+          },
+          "crop": {
+            "description": "Opcional. Recorte a aplicar na imagem. Requer imageUrl.",
+            "allOf": [{ "$ref": "#/components/schemas/Crop" }]
+          }
+        }
+      },
+      "UpdateNoteRequest": {
+        "type": "object",
+        "description": "Ao menos um campo é obrigatório.",
+        "properties": {
+          "title":   { "type": "string", "minLength": 2, "maxLength": 200, "example": "Título atualizado" },
+          "content": { "type": "string", "minLength": 1, "maxLength": 10000, "example": "Conteúdo revisado..." },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string", "maxLength": 30 },
+            "maxItems": 10,
+            "example": ["revisado"]
+          },
+          "imageUrl": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "example": "https://example.com/nova-imagem.jpg",
+            "description": "Envie null ou string vazia para remover a imagem."
+          },
+          "crop": {
+            "description": "Opcional. Atualiza somente o recorte sem alterar a imageUrl.",
+            "allOf": [{ "$ref": "#/components/schemas/Crop" }]
+          }
+        }
+      },
+      "NoteResponse": {
+        "type": "object",
+        "required": ["success", "message", "data"],
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Nota encontrada" },
+          "data":    { "$ref": "#/components/schemas/Note" }
+        }
+      },
+      "NotesListResponse": {
+        "type": "object",
+        "required": ["success", "message", "data", "pagination"],
+        "properties": {
+          "success":    { "type": "boolean", "example": true },
+          "message":    { "type": "string", "example": "Notes fetched successfully" },
+          "data":       { "type": "array", "items": { "$ref": "#/components/schemas/Note" }, "description": "Array plano de notas — nunca aninhado em sub-objetos" },
+          "pagination": { "$ref": "#/components/schemas/Pagination" }
+        }
+      },
+      "StatsResponse": {
+        "type": "object",
+        "required": ["success", "message", "data"],
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Stats retrieved successfully" },
+          "data": {
+            "type": "object",
+            "required": ["total", "active", "archived", "byTag"],
+            "properties": {
+              "total":    { "type": "integer", "example": 42 },
+              "active":   { "type": "integer", "example": 38 },
+              "archived": { "type": "integer", "example": 4 },
+              "byTag": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tag":   { "type": "string", "example": "trabalho" },
+                    "count": { "type": "integer", "example": 15 }
+                  }
+                },
+                "description": "Top 10 tags mais utilizadas"
+              }
+            }
+          }
+        }
+      },
+      "DeleteResponse": {
+        "type": "object",
+        "required": ["success", "message", "data"],
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "message": { "type": "string", "example": "Nota removida com sucesso" },
+          "data":    { "type": "object", "nullable": true, "example": null }
+        }
+      }
+    },
+    "parameters": {
+      "NoteId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "example": "665f1a2b3c4d5e6f7a8b9c0d" },
+        "description": "ID único da nota (MongoDB ObjectId)"
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Token ausente, inválido ou expirado.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+            "example": { "success": false, "message": "Authentication token not provided", "error": { "code": "UNAUTHORIZED" } }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Recurso não encontrado (ou não pertence ao usuário autenticado).",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+            "example": { "success": false, "message": "Note not found", "error": { "code": "NOT_FOUND" } }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Dados de entrada inválidos.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+            "example": { "success": false, "message": "title: title must be at least 2 characters", "error": { "code": "VALIDATION_ERROR" } }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Verificação de disponibilidade",
+        "description": "Retorna o status da API. Útil para health checks de CI/CD e monitoramento.",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "API online",
+            "content": {
+              "application/json": {
+                "example": {
+                  "status": "ok",
+                  "environment": "development",
+                  "timestamp": "2024-06-05T10:00:00.000Z"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Criar nova conta",
+        "description": "Registra um novo usuário e retorna o token JWT imediatamente. A senha é armazenada com bcrypt (12 salt rounds) — nunca em texto plano.",
+        "operationId": "register",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterRequest" },
+              "examples": {
+                "basic": {
+                  "summary": "Registro simples",
+                  "value": { "name": "Maria Oliveira", "email": "maria@exemplo.com", "password": "minhasenha123" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Conta criada com sucesso",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AuthResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "409": {
+            "description": "E-mail já cadastrado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "success": false, "message": "Email already in use", "error": { "code": "DUPLICATE_FIELD" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Autenticar e obter token JWT",
+        "description": "Autentica com e-mail e senha. Em caso de credenciais inválidas, retorna mensagem genérica (não revela se o e-mail existe no sistema).",
+        "operationId": "login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" },
+              "examples": {
+                "basic": {
+                  "summary": "Login padrão",
+                  "value": { "email": "maria@exemplo.com", "password": "minhasenha123" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login realizado com sucesso",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AuthResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": {
+            "description": "Credenciais inválidas",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "success": false, "message": "Invalid email or password", "error": { "code": "UNAUTHORIZED" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notes": {
+      "get": {
+        "tags": ["Notes"],
+        "summary": "Listar notas com filtros e paginação",
+        "description": "Retorna as notas do usuário autenticado. Suporta busca textual, filtro por tag e filtro por status de arquivamento. A resposta inclui metadados de paginação separados do array de dados.",
+        "operationId": "listNotes",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": { "type": "integer", "default": 1, "minimum": 1 },
+            "description": "Página atual",
+            "example": 1
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 10, "minimum": 1, "maximum": 100 },
+            "description": "Itens por página (máximo 100)",
+            "example": 10
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Busca case-insensitive nos campos `title` e `content` (regex $or)",
+            "example": "reunião"
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Filtrar notas que contenham exatamente esta tag",
+            "example": "trabalho"
+          },
+          {
+            "name": "archived",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["true", "false"] },
+            "description": "Filtrar por status: `true` = só arquivadas, `false` = só ativas. Omitir retorna todas.",
+            "example": "false"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de notas retornada com sucesso",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/NotesListResponse" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
+      "post": {
+        "tags": ["Notes"],
+        "summary": "Criar nova nota",
+        "description": "Cria uma nota para o usuário autenticado. O `userId` é extraído automaticamente do token JWT — nunca do corpo da requisição.\n\n**Campos obrigatórios:** `title`, `content`\n\n**Campos opcionais:** `tags`, `imageUrl`, `crop`",
+        "operationId": "createNote",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateNoteRequest" },
+              "examples": {
+                "minimal": {
+                  "summary": "Nota mínima (só title e content)",
+                  "value": {
+                    "title": "Minha primeira nota",
+                    "content": "Conteúdo da nota aqui."
+                  }
+                },
+                "with_tags": {
+                  "summary": "Nota com tags",
+                  "value": {
+                    "title": "Sprint Planning",
+                    "content": "Definição de backlog para Q3.",
+                    "tags": ["dev", "agile", "planejamento"]
+                  }
+                },
+                "with_image_and_crop": {
+                  "summary": "Nota com imagem e recorte",
+                  "value": {
+                    "title": "Foto da reunião",
+                    "content": "Captura de tela do quadro de planejamento.",
+                    "tags": ["trabalho"],
+                    "imageUrl": "https://example.com/quadro.jpg",
+                    "crop": { "x": 10, "y": 5, "width": 80, "height": 90 }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Nota criada com sucesso",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/NoteResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/notes/stats": {
+      "get": {
+        "tags": ["Notes"],
+        "summary": "Estatísticas agregadas das notas",
+        "description": "Retorna contadores agregados das notas do usuário: total, ativas, arquivadas e top 10 tags mais usadas. Usa uma única pipeline `$facet` no MongoDB.",
+        "operationId": "getNoteStats",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Estatísticas retornadas com sucesso",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/StatsResponse" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/notes/{id}": {
+      "get": {
+        "tags": ["Notes"],
+        "summary": "Buscar nota por ID",
+        "description": "Retorna uma nota específica. Só é retornada se pertencer ao usuário autenticado — caso contrário, retorna 404 (sem revelar a existência da nota para outros usuários).",
+        "operationId": "getNote",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/NoteId" }],
+        "responses": {
+          "200": {
+            "description": "Nota encontrada",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/NoteResponse" } }
+            }
+          },
+          "400": {
+            "description": "ID inválido (formato ObjectId incorreto)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "success": false, "message": "Invalid note ID", "error": { "code": "INVALID_ID" } }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "put": {
+        "tags": ["Notes"],
+        "summary": "Atualizar nota (atualização parcial)",
+        "description": "Atualiza um ou mais campos da nota. Somente os campos enviados no body serão modificados. Ao menos um campo é obrigatório.",
+        "operationId": "updateNote",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/NoteId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateNoteRequest" },
+              "examples": {
+                "title_only": {
+                  "summary": "Atualizar apenas o título",
+                  "value": { "title": "Título atualizado" }
+                },
+                "update_crop": {
+                  "summary": "Atualizar recorte da imagem",
+                  "value": { "crop": { "x": 5, "y": 5, "width": 90, "height": 90 } }
+                },
+                "full_update": {
+                  "summary": "Atualização completa",
+                  "value": {
+                    "title": "Reunião de revisão",
+                    "content": "Conteúdo revisado e atualizado.",
+                    "tags": ["revisado", "trabalho"],
+                    "imageUrl": "https://example.com/nova-capa.jpg",
+                    "crop": { "x": 0, "y": 0, "width": 100, "height": 100 }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Nota atualizada com sucesso",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/NoteResponse" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/ValidationError" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Notes"],
+        "summary": "Excluir nota permanentemente",
+        "description": "Remove a nota de forma permanente. Esta operação é irreversível. Para uma remoção suave, utilize `PATCH /api/notes/{id}/archive`.",
+        "operationId": "deleteNote",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/NoteId" }],
+        "responses": {
+          "200": {
+            "description": "Nota excluída com sucesso",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DeleteResponse" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/notes/{id}/archive": {
+      "patch": {
+        "tags": ["Notes"],
+        "summary": "Alternar status de arquivamento",
+        "description": "Alterna o status da nota entre ativa e arquivada (toggle). Não requer body. Notas arquivadas não aparecem na listagem padrão, mas podem ser recuperadas com `?archived=true`.",
+        "operationId": "toggleArchive",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/NoteId" }],
+        "responses": {
+          "200": {
+            "description": "Status alterado com sucesso",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/NoteResponse" },
+                "examples": {
+                  "archived": {
+                    "summary": "Nota arquivada",
+                    "value": { "success": true, "message": "Note archived successfully", "data": { "_id": "665f...", "archived": true } }
+                  },
+                  "restored": {
+                    "summary": "Nota restaurada",
+                    "value": { "success": true, "message": "Note restored successfully", "data": { "_id": "665f...", "archived": false } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    }
+  }
+}
