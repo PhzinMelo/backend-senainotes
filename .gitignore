@@ -1,0 +1,22 @@
+# Dependências (Nunca suba a pasta node_modules, ela é gigante)
+node_modules/
+
+# Variáveis de Ambiente (SEGURANÇA: Contém suas senhas e chaves JWT)
+.env
+.env.local
+.env.test
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+*.log
+
+# Pasta de Build (Se você usa TypeScript)
+dist/
+build/
+
+# Arquivos do Sistema Operacional
+.DS_Store
+Thumbs.db
